@@ -114,7 +114,7 @@ class MoonlightFinetuneKwargs(TypedDict, total=False):
     packed_sequence: bool
     # Training hyperparameters
     train_iters: int
-    global_batch_size: Optional[int]
+    global_batch_size: int
     micro_batch_size: int
     seq_length: int
     finetune_lr: float
@@ -132,7 +132,7 @@ class MoonlightFinetuneKwargs(TypedDict, total=False):
     wandb_exp_name: Optional[str]
 
 
-def moonlight_16b_pretrain_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) -> ConfigContainer:
+def moonlight_16b_finetune_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Moonlight-16B.
 
     See `_moonlight_common` for the full list of parameters.
