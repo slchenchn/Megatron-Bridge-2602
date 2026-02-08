@@ -24,7 +24,10 @@ from megatron.bridge.models.deepseek import MoonlightModelProvider16B
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.utils.optimizer_utils import (
+    distributed_fused_adam_with_cosine_annealing,
+    distributed_muon_with_cosine_annealing,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -117,6 +120,7 @@ class MoonlightFinetuneKwargs(TypedDict, total=False):
     global_batch_size: int
     micro_batch_size: int
     seq_length: int
+    optimizer_type: str
     finetune_lr: float
     min_lr: float
     lr_warmup_iters: int
@@ -132,7 +136,7 @@ class MoonlightFinetuneKwargs(TypedDict, total=False):
     wandb_exp_name: Optional[str]
 
 
-def moonlight_16b_finetune_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) -> ConfigContainer:
+def moonlight_16b_pretrain_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Moonlight-16B.
 
     See `_moonlight_common` for the full list of parameters.
@@ -237,7 +241,7 @@ def _moonlight_common(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        optimizer_type (str): Type of optimizer to use.
+    optimizer_type (str): Type of optimizer to use ("adam", "muon", or "dist_muon").
         eval_interval (int): Interval for evaluation.
         save_interval (int): Interval for saving checkpoints.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
@@ -271,6 +275,8 @@ def _moonlight_common(
         apply_rope_fusion=apply_rope_fusion,
     )
 
+    use_dist_opt = optimizer_type == "adam"
+
     if optimizer_type == "adam":
         opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
             lr_warmup_iters=lr_warmup_iters,
@@ -288,9 +294,20 @@ def _moonlight_common(
         opt_config.main_grads_dtype = torch.bfloat16
         opt_config.exp_avg_dtype = torch.bfloat16
         opt_config.exp_avg_sq_dtype = torch.bfloat16
+    elif optimizer_type in ("muon", "dist_muon"):
+        opt_config, scheduler = distributed_muon_with_cosine_annealing(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=train_iters,
+            max_lr=lr,
+            min_lr=min_lr,
+            weight_decay=0.1,
+        )
+        if optimizer_type == "muon":
+            opt_config.optimizer = "muon"
     else:
-        # TODO: Add support for muon optimizer once mcore supports it
         raise ValueError(f"Invalid optimizer type: {optimizer_type}")
+
+    opt_config.use_distributed_optimizer = use_dist_opt
 
     if precision_config is None:
         precision_config = MixedPrecisionConfig(
@@ -321,7 +338,7 @@ def _moonlight_common(
             overlap_grad_reduce=True,
             overlap_param_gather=True,
             average_in_collective=True,
-            use_distributed_optimizer=True,
+            use_distributed_optimizer=use_dist_opt,
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -528,6 +545,7 @@ def _moonlight_finetune_common(
     eval_interval: int = 50,
     save_interval: int = 50,
     # Optimizer
+    optimizer_type: str = "adam",
     finetune_lr: float = 1e-4,
     min_lr: float = 0.0,
     lr_warmup_iters: int = 50,
@@ -569,6 +587,7 @@ def _moonlight_finetune_common(
         seq_length (int): Sequence length for training data.
         eval_interval (int): Interval for evaluation.
         save_interval (int): Interval for saving checkpoints.
+        optimizer_type (str): Type of optimizer to use ("adam", "muon", or "dist_muon").
         finetune_lr (float): Learning rate for finetuning.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
@@ -609,23 +628,40 @@ def _moonlight_finetune_common(
     model_cfg.seq_length = seq_length
 
     # Optimizer and LR scheduler
-    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters or train_iters,
-        max_lr=finetune_lr,
-        min_lr=min_lr,
-        adam_beta1=0.9,
-        adam_beta2=0.98,
-        adam_eps=1e-5,
-        weight_decay=0.1,
-    )
+    use_dist_opt = optimizer_type == "adam"
 
-    # Set precision-aware optimizer settings similar to pretrain
-    opt_cfg.use_precision_aware_optimizer = True
-    opt_cfg.main_params_dtype = torch.float32
-    opt_cfg.main_grads_dtype = torch.bfloat16
-    opt_cfg.exp_avg_dtype = torch.bfloat16
-    opt_cfg.exp_avg_sq_dtype = torch.bfloat16
+    if optimizer_type == "adam":
+        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=lr_decay_iters or train_iters,
+            max_lr=finetune_lr,
+            min_lr=min_lr,
+            adam_beta1=0.9,
+            adam_beta2=0.98,
+            adam_eps=1e-5,
+            weight_decay=0.1,
+        )
+
+        # Set precision-aware optimizer settings similar to pretrain
+        opt_cfg.use_precision_aware_optimizer = True
+        opt_cfg.main_params_dtype = torch.float32
+        opt_cfg.main_grads_dtype = torch.bfloat16
+        opt_cfg.exp_avg_dtype = torch.bfloat16
+        opt_cfg.exp_avg_sq_dtype = torch.bfloat16
+    elif optimizer_type in ("muon", "dist_muon"):
+        opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=lr_decay_iters or train_iters,
+            max_lr=finetune_lr,
+            min_lr=min_lr,
+            weight_decay=0.1,
+        )
+        if optimizer_type == "muon":
+            opt_cfg.optimizer = "muon"
+    else:
+        raise ValueError(f"Invalid optimizer type: {optimizer_type}")
+
+    opt_cfg.use_distributed_optimizer = use_dist_opt
 
     # PEFT config
     peft_config = default_peft_config(peft)
@@ -678,7 +714,7 @@ def _moonlight_finetune_common(
             overlap_grad_reduce=True,
             overlap_param_gather=True,
             average_in_collective=True,
-            use_distributed_optimizer=True,
+            use_distributed_optimizer=use_dist_opt,
         ),
         dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
         logger=logger_cfg,

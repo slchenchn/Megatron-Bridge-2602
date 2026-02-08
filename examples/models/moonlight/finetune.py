@@ -38,7 +38,7 @@ from megatron.bridge.recipes.moonlight.moonlight_16b import MoonlightFinetuneKwa
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.utils.common_utils import get_world_size_safe
+from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
 def calculate_train_samples(train_size: int, train_epochs: float, ddp_size: int, packing_factor: float = 1.0) -> int:
@@ -82,6 +82,19 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=4096,
         help="Sequence length",
+    )
+    parser.add_argument(
+        "--optimizer-type",
+        type=str,
+        default="dist_muon",
+        choices=["adam", "dist_muon"],
+        help="Optimizer type.",
+    )
+    parser.add_argument(
+        "--precision-config",
+        type=str,
+        default="bf16_mixed",
+        help="Precision config name.",
     )
     parser.add_argument(
         "--exp-name",
@@ -178,15 +191,15 @@ def main() -> None:
     if Path(a800_path).exists():
         hf_model_path = a800_path
         dataset_root = "/nfs/FM/datasets/olmo3-post-training/allenai__Dolci-Instruct-SFT-No-Tools.filtered.shuffle"
-        precision_config = "bf16_mixed"
         enable_deepep = False
-        print(f">> auto detect a800 env, {dataset_root=}, {hf_model_path=}, {precision_config=}, {enable_deepep=}")
+        print_rank_0(f">> auto detect a800 env, {dataset_root=}, {hf_model_path=}, {enable_deepep=}")
     elif Path(h100_path).exists():
         hf_model_path = h100_path
-        dataset_root = "/mnt/md0/Dataset/olmo3-post-training/allenai__Dolci-Instruct-SFT-No-Tools.filtered.shuffle"
-        precision_config = "bf16_with_fp8_subchannel_scaling_mixed"
+        dataset_root = (
+            "/home/admin/csl/Dataset/olmo3-post-training/allenai__Dolci-Instruct-SFT-No-Tools.filtered.shuffle"
+        )
         enable_deepep = True
-        print(f">> auto detect h100 env, {dataset_root=}, {hf_model_path=}, {precision_config=}, {enable_deepep=}")
+        print_rank_0(f">> auto detect h100 env, {dataset_root=}, {hf_model_path=}, {enable_deepep=}")
     else:
         raise ValueError(f"Checkpoint not found in {a800_path} or {h100_path}")
 
@@ -199,7 +212,7 @@ def main() -> None:
         "pipeline_dtype": torch.bfloat16,
         "virtual_pipeline_model_parallel_size": None,
         "context_parallel_size": 1,
-        "expert_model_parallel_size": 8,
+        "expert_model_parallel_size": get_world_size_safe(),
         "sequence_parallel": True,
         "recompute_granularity": "selective",
         "enable_deepep": False,
@@ -209,6 +222,7 @@ def main() -> None:
         "name": args.exp_name,
         "packed_sequence": args.packed_sequence,
         "seq_length": args.seq_length,
+        "optimizer_type": args.optimizer_type,
     }
     config = _moonlight_finetune_common(**kwargs)
 
@@ -228,10 +242,10 @@ def main() -> None:
     # Print/log every N iterations.
     config.logger.log_interval = 5
     # Increase PG/NCCL collective timeout for long tokenization.
-    config.dist.distributed_timeout_minutes = 240
+    # config.dist.distributed_timeout_minutes = 240
 
     # === Quick test run ===
-    packing_factor = 6.82 if args.packed_sequence else 1.0
+    packing_factor = 6.991 if args.packed_sequence else 1.0
     world_size = get_world_size_safe()
     config.set_data_parallel_size()
     ddp_size = config.data_parallel_size
@@ -253,7 +267,7 @@ def main() -> None:
         config.scheduler.lr_warmup_iters = 0
         config.scheduler.lr_decay_iters = None
         config.scheduler.lr_wsd_decay_iters = None
-        print(
+        print_rank_0(
             f">> train_epochs={args.train_epochs}, train_size={train_size}, packing_factor={packing_factor}, train_samples={train_samples} (packs), GBS={config.train.global_batch_size}, World Size={world_size}, DDP Size={ddp_size}"
         )
 
@@ -266,7 +280,7 @@ def main() -> None:
 
     # === Adjust learning rate ===
     config.optimizer.lr = 5e-6
-    config.mixed_precision = precision_config
+    config.mixed_precision = args.precision_config
 
     # Start finetuning
     finetune(config=config, forward_step_func=forward_step)

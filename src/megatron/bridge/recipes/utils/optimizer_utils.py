@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import Optional
 
 from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
+from megatron.bridge.utils.common_utils import print_rank_0
 
 
 def distributed_muon_with_cosine_annealing(
@@ -64,6 +66,12 @@ def distributed_muon_with_cosine_annealing(
         lr_decay_iters=lr_decay_iters,
         override_opt_param_scheduler=True,
     )
+    # Match Adam update RMS: sqrt((1 - beta1) / (1 + beta1)).
+    muon_extra_scale_factor = math.sqrt((1.0 - muon_momentum) / (1.0 + muon_momentum))
+    print_rank_0(
+        f"[dist_muon] Using muon_extra_scale_factor={muon_extra_scale_factor:.6f} "
+        f"(beta1={muon_momentum})"
+    )
     optimizer = OptimizerConfig(
         optimizer="dist_muon",
         lr=max_lr,
@@ -77,6 +85,7 @@ def distributed_muon_with_cosine_annealing(
         muon_fp32_matmul_prec=muon_fp32_matmul_prec,
         muon_num_ns_steps=muon_num_ns_steps,
         muon_tp_mode=muon_tp_mode,
+        muon_extra_scale_factor=muon_extra_scale_factor,
         clip_grad=clip_grad,
     )
     return optimizer, scheduler

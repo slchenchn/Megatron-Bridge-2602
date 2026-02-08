@@ -128,6 +128,7 @@ def apply_monkey_patches():
             raise ValueError("pad_seq_to_mult must be a positive integer when provided.")
 
         pad_seq_length_to_mult = 1 if pad_seq_to_mult is None else max(1, pad_seq_to_mult)
+        effective_pad_seq_to_mult = 1 if pad_seq_to_mult is None else pad_seq_to_mult
 
         dataset = create_sft_dataset(
             path=path,
@@ -144,7 +145,7 @@ def apply_monkey_patches():
         iterator = trange(len(dataset), desc="Tokenizing dataset", mininterval=1, leave=False)
         dataset = np.array([dataset[i] for i in iterator])
 
-        if pad_seq_to_mult > 1:
+        if effective_pad_seq_to_mult > 1:
 
             def pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id):
                 # Pre-pad sequences to the next multiple to improve packing efficiency.
@@ -182,6 +183,7 @@ def apply_monkey_patches():
         seed=0,
         packing_algorithm="first_fit_shuffle",
         dataset_kwargs=None,
+        pad_seq_to_mult=1,
     ):
         # Reuse cached tokenization to avoid recomputation across retries.
         logger = logging.getLogger(ps.__name__)
@@ -196,7 +198,14 @@ def apply_monkey_patches():
             else:
                 dataset = np.load(cache_path, allow_pickle=True)
         else:
-            dataset = ps.tokenize_dataset(input_path, tokenizer, max_seq_length, seed, dataset_kwargs)
+            dataset = ps.tokenize_dataset(
+                input_path,
+                tokenizer,
+                max_seq_length,
+                seed,
+                dataset_kwargs,
+                pad_seq_to_mult=pad_seq_to_mult,
+            )
             logger.info(f"Saving tokenized data cache to {cache_path}")
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
@@ -252,7 +261,7 @@ def apply_monkey_patches():
                 seed=self.seed,
                 output_metadata_path=self.pack_metadata,
                 dataset_kwargs=self.dataset_kwargs,
-                pad_seq_to_mult=self._pad_seq_to_mult,
+                pad_seq_to_mult=getattr(self, "_pad_seq_to_mult", None),
             )
         else:
             print_rank_0(f"[PATCHED] Packed training data already exists at {self.train_path_packed}")
@@ -278,7 +287,7 @@ def apply_monkey_patches():
             seed=self.seed,
             output_metadata_path=self.pack_metadata,
             dataset_kwargs=self.dataset_kwargs,
-            pad_seq_to_mult=self._pad_seq_to_mult,
+            pad_seq_to_mult=getattr(self, "_pad_seq_to_mult", None),
         )
 
     def _build_datasets_patched(self):
