@@ -42,7 +42,7 @@ esac
 
 MODEL_NAME=Moonlight-16B-A3B
 
-TP_SIZE=2
+TP_SIZE=1
 MICRO_BATCH_SIZE=1
 PACK_SEQ=1
 EPOCH=1
@@ -72,7 +72,6 @@ torchrun --nproc_per_node=8 \
     --tp "${TP_SIZE}" \
     --train-epochs "${EPOCH}" \
     --packed-sequence ${PACK_SEQ} \
-    --enable-recompute \
     --optimizer-type "${OPTIMIZER_TYPE}" \
     --precision-config "${PRECISION_CONFIG}" \
     --exp-name "${EXP_NAME}" |&

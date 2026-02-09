@@ -702,7 +702,7 @@ def _moonlight_finetune_common(
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
-            manual_gc=True,
+            manual_gc=False,
             manual_gc_interval=5,
             manual_gc_eval=5,
         ),

@@ -132,13 +132,6 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Tensor model parallel size (must match the pretrained checkpoint TP).",
     )
-    # Activation recomputation (a.k.a. activation checkpointing) to reduce memory.
-    # Mirrors Megatron-Core transformer config fields.
-    parser.add_argument(
-        "--enable-recompute",
-        action="store_true",
-        help="Enable activation recomputation (activation checkpointing).",
-    )
     args = parser.parse_args()
     args.packed_sequence = bool(args.packed_sequence)
     return args
@@ -191,15 +184,13 @@ def main() -> None:
     if Path(a800_path).exists():
         hf_model_path = a800_path
         dataset_root = "/nfs/FM/datasets/olmo3-post-training/allenai__Dolci-Instruct-SFT-No-Tools.filtered.shuffle"
-        enable_deepep = False
-        print_rank_0(f">> auto detect a800 env, {dataset_root=}, {hf_model_path=}, {enable_deepep=}")
+        print_rank_0(f">> auto detect a800 env, {dataset_root=}, {hf_model_path=}")
     elif Path(h100_path).exists():
         hf_model_path = h100_path
         dataset_root = (
             "/home/admin/csl/Dataset/olmo3-post-training/allenai__Dolci-Instruct-SFT-No-Tools.filtered.shuffle"
         )
-        enable_deepep = True
-        print_rank_0(f">> auto detect h100 env, {dataset_root=}, {hf_model_path=}, {enable_deepep=}")
+        print_rank_0(f">> auto detect h100 env, {dataset_root=}, {hf_model_path=}")
     else:
         raise ValueError(f"Checkpoint not found in {a800_path} or {h100_path}")
 
@@ -213,10 +204,8 @@ def main() -> None:
         "virtual_pipeline_model_parallel_size": None,
         "context_parallel_size": 1,
         "expert_model_parallel_size": get_world_size_safe(),
-        "sequence_parallel": True,
-        "recompute_granularity": "selective",
-        "enable_deepep": False,
-        "apply_rope_fusion": False,
+        "sequence_parallel": True if args.tensor_model_parallel_size > 1 else False,
+        "apply_rope_fusion": True,
         "peft": None,
         "finetune_lr": 5e-6,
         "name": args.exp_name,
@@ -229,6 +218,12 @@ def main() -> None:
     config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     config.checkpoint.save_interval = 5000
 
+    # config.comm_overlap.overlap_moe_expert_parallel_comm = True
+    # config.model.moe_shared_expert_overlap = False
+
+    config.model.recompute_granularity = None
+    config.model.recompute_method = None
+    config.model.recompute_num_layers = None
     config.model.cross_entropy_fusion_impl = "te"
 
     # ===== OPTIONAL CUSTOMIZATIONS =====
@@ -238,9 +233,13 @@ def main() -> None:
     dataset_cfg.dataset_root = dataset_root
     dataset_cfg.val_proportion = 0.0
     dataset_cfg.do_validation = False
+    # dataset_cfg.num_workers = 2
+    # dataset_cfg.persistent_workers = True
 
     # Print/log every N iterations.
-    config.logger.log_interval = 5
+    config.logger.log_interval = 10
+    config.logger.log_timers_to_tensorboard = False
+    config.logger.tensorboard_log_interval = 10   # 或 50
     # Increase PG/NCCL collective timeout for long tokenization.
     # config.dist.distributed_timeout_minutes = 240
 
