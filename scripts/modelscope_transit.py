@@ -139,6 +139,7 @@ def main():
     api.login(token)
     local_dir = Path(args.local_dir)
     if local_dir.exists():
+        print("Branch: upload (local_dir exists) -> uploading to ModelScope")
         upload_to_modelscope(
             folder_path=local_dir,
             repo_id=args.repo_id,
@@ -147,6 +148,7 @@ def main():
             repo_type=args.repo_type,
         )
     else:
+        print("Branch: download (local_dir not found) -> downloading from ModelScope")
         download_from_modelscope(repo_id=args.repo_id, local_dir=local_dir)
 
 

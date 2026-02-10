@@ -171,6 +171,7 @@ examples/*/data
 wandb
 dump.py
 checkpoints/
+.nfs*
 
 docs/sources/source/test_build/
 

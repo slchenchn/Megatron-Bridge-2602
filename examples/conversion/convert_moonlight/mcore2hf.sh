@@ -1,7 +1,11 @@
 # set -x
 
-
 MCORE_DIR=$1
+
+if [[ ! -d "${MCORE_DIR}" ]]; then
+  echo "Warning: output MCORE_DIR dir do not exists." >&2
+  exit 1
+fi
 
 if [[ -d /nfs/FM/chenshuailin ]]; then
   # aihub
