@@ -38,15 +38,22 @@ def parse_args() -> argparse.Namespace:
         help="HuggingFace tokenizer path. If unset, auto-detects common local Moonlight paths.",
     )
     parser.add_argument(
+        "--pretrained-checkpoint",
+        type=str,
+        default=None,
+        help="Path to pretrained model checkpoint directory. Loads model weights only (no optim/rng).",
+    )
+    parser.add_argument(
         "--data-path",
         type=str,
         nargs="+",
-        required=True,
+        required=False,
         help=(
             "Megatron indexed dataset prefix list. Supports weighted format, e.g. "
             "--data-path 30 /path/a 70 /path/b"
         ),
     )
+    parser.add_argument("--mock-data", action="store_true", help="Use mock GPT data for debugging.")
     parser.add_argument("--optimizer-type", type=str, default="dist_muon", choices=["adam", "dist_muon"])
     parser.add_argument("--precision-config", type=str, default="bf16_mixed")
     parser.add_argument("--exp-name", type=str, default="moonlight_pretrain")
@@ -112,19 +119,22 @@ def _default_ep(tp: int, pp: int, cp: int) -> int:
 def main() -> None:
     args = parse_args()
 
+    if not args.mock_data and not args.data_path:
+        raise ValueError("--data-path is required unless --mock-data is set")
+
     tokenizer_path = args.tokenizer_path or _auto_detect_tokenizer_path(args.model_name)
     expert_model_parallel_size = args.ep or _default_ep(args.tp, args.pp, args.cp)
 
     cfg = moonlight_16b_pretrain_config(
         name=args.exp_name,
         data_paths=args.data_path,
-        mock=False,
+        mock=args.mock_data,
         tensor_model_parallel_size=args.tp,
         pipeline_model_parallel_size=args.pp,
         context_parallel_size=args.cp,
         expert_model_parallel_size=expert_model_parallel_size,
         sequence_parallel=args.tp > 1,
-        recompute_granularity="selective" if args.enable_recompute else "none",
+        recompute_granularity="selective",
         apply_rope_fusion=args.apply_rope_fusion,
         train_iters=args.train_iters,
         global_batch_size=args.global_batch_size,
@@ -152,12 +162,19 @@ def main() -> None:
     if args.load is not None:
         cfg.checkpoint.load = args.load
 
+    if args.pretrained_checkpoint is not None:
+        cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+        cfg.checkpoint.load = args.pretrained_checkpoint
+        cfg.checkpoint.finetune = True
+        cfg.checkpoint.load_optim = False
+        cfg.checkpoint.load_rng = False
+
     print_rank_0(
         "[moonlight-pretrain] "
         f"optimizer={args.optimizer_type}, precision={args.precision_config}, "
         f"tp={args.tp}, pp={args.pp}, cp={args.cp}, ep={expert_model_parallel_size}, "
         f"train_iters={args.train_iters}, gbs={args.global_batch_size}, mbs={args.micro_batch_size}, "
-        f"seq_len={args.seq_length}, data_path={args.data_path}"
+        f"seq_len={args.seq_length}, mock_data={args.mock_data}, data_path={args.data_path}, pretrained={args.pretrained_checkpoint}"
     )
 
     pretrain(config=cfg, forward_step_func=forward_step)

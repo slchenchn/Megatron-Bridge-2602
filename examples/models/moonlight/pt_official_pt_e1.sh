@@ -40,8 +40,9 @@ esac
 
 # ===== Fixed training config (edit here when needed) =====
 MODEL_NAME="Moonlight-16B-A3B"
+PRETRAINED_CHECKPOINT="checkpoints/Moonlight-16B-A3B-bridge-mcore"
 TOKENIZER_PATH="/home/admin/csl/checkpoints/moonshotai/${MODEL_NAME}"
-DATA_PATH="/mnt/md0/Dataset/tokenized_merged_v2_aihub/dolma3_dolmino_mix-100B-1125-ingredient1"
+DATA_PATH="/home/admin/csl/Dataset/tokenized/allenai_dolma3_dolmino_mix-100B-1125-ingredient1-common-crawl_text_document"
 
 GPUS_PER_NODE=8
 NUM_NODES=1
@@ -75,6 +76,7 @@ torchrun \
     --master_port "${MASTER_PORT}" \
     examples/models/moonlight/pretrain.py \
     --model-name "${MODEL_NAME}" \
+    --pretrained-checkpoint "${PRETRAINED_CHECKPOINT}" \
     --tokenizer-path "${TOKENIZER_PATH}" \
     --data-path "${DATA_PATH}" \
     --optimizer-type "${OPTIMIZER_TYPE}" \
@@ -90,5 +92,4 @@ torchrun \
     --pp "${PP_SIZE}" \
     --cp "${CP_SIZE}" \
     --save "${CHECKPOINT_PATH}" \
-    --load "${CHECKPOINT_PATH}" \
     --exp-name "${EXP_NAME}" |& tee "${LOG_DIR}/train_${TIMESTAMP}.log"
