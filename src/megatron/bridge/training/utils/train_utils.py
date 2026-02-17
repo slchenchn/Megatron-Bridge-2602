@@ -653,9 +653,22 @@ def training_log(
         # Calculate GPU utilization
         num_flops = num_floating_point_operations(config, batch_size)
         per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
-        print_rank_0(
-            f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f} MODEL_TFLOP/s/GPU"
+        seq_length = getattr(config.model, "seq_length", None) or getattr(
+            config.dataset, "seq_length", getattr(config.dataset, "sequence_length", None)
         )
+        tokens_per_sec_per_gpu = None
+        if seq_length is not None and elapsed_time_per_iteration > 0:
+            tokens_per_iter = batch_size * seq_length
+            tokens_per_sec_per_gpu = tokens_per_iter / elapsed_time_per_iteration / get_world_size_safe()
+        if tokens_per_sec_per_gpu is not None:
+            print_rank_0(
+                f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f} MODEL_TFLOP/s/GPU "
+                f"tokens/s/GPU: {tokens_per_sec_per_gpu:.0f}"
+            )
+        else:
+            print_rank_0(
+                f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f} MODEL_TFLOP/s/GPU"
+            )
 
         if logger_config.log_throughput_to_tensorboard:
             if writer:
@@ -691,6 +704,8 @@ def training_log(
 
         if logger_config.log_throughput:
             log_string += f" throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |"
+            if tokens_per_sec_per_gpu is not None:
+                log_string += f" tokens/s/GPU: {tokens_per_sec_per_gpu:.0f} |"
 
         if energy_monitor is not None:
             energy = (energy_monitor.lap() / total_iterations) / get_world_size_safe()

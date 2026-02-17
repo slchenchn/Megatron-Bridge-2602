@@ -42,38 +42,36 @@ esac
 MODEL_NAME="Moonlight-16B-A3B"
 PRETRAINED_CHECKPOINT="checkpoints/Moonlight-16B-A3B-bridge-mcore"
 TOKENIZER_PATH="/home/admin/csl/checkpoints/moonshotai/${MODEL_NAME}"
-DATA_PATH="/home/admin/csl/Dataset/tokenized/allenai_dolma3_dolmino_mix-100B-1125-ingredient1-common-crawl_text_document"
+DATA_PATH="/home/admin/csl/Dataset/tokenized_merged_moonlight/dolma3_dolmino_mix-100B-1125-ingredient1_moonlight_v2_coverage"
 
-GPUS_PER_NODE=8
-NUM_NODES=1
-MASTER_ADDR=localhost
-MASTER_PORT=6000
-NODE_RANK=0
-
-TP_SIZE=2
-PP_SIZE=1
+TP_SIZE=1
 CP_SIZE=1
-MICRO_BATCH_SIZE=1
+EP_SIZE=8
+MICRO_BATCH_SIZE=4
 GLOBAL_BATCH_SIZE=1024
-TRAIN_ITERS=1000
+TRAIN_ITERS=7500    # 30B / 4M = 7500
 SEQ_LEN=4096
 LR=1.5e-4
 MIN_LR=1.5e-6
-LR_WARMUP_ITERS=100
+LR_WARMUP_ITERS=8
+LR_DECAY_STYLE="WSD"
+LR_WSD_DECAY_ITERS=750
 
-CHECKPOINT_PATH="checkpoints/${MODEL_NAME}-bridge-mcore-pretrain/TP${TP_SIZE}_PP${PP_SIZE}_${PRECISION_INPUT}_${OPTIMIZER_TYPE}"
 EXP_NAME="${MODEL_NAME}_pt_${PRECISION_INPUT}_${OPTIMIZER_TYPE}_TP${TP_SIZE}"
+CHECKPOINT_SAVE_DIR="nemo_experiments/${EXP_NAME}/checkpoints"
 
 LOG_DIR="nemo_experiments/${EXP_NAME}"
-mkdir -p "${LOG_DIR}" "$(dirname "${CHECKPOINT_PATH}")"
+mkdir -p "${LOG_DIR}" "$(dirname "${CHECKPOINT_SAVE_DIR}")"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+
 torchrun \
-    --nproc_per_node "${GPUS_PER_NODE}" \
-    --nnodes "${NUM_NODES}" \
-    --node_rank "${NODE_RANK}" \
-    --master_addr "${MASTER_ADDR}" \
-    --master_port "${MASTER_PORT}" \
+    --nproc_per_node 8 \
+    --nnodes 1 \
+    --node_rank 0 \
+    --master_addr localhost \
+    --master_port 26000 \
     examples/models/moonlight/pretrain.py \
     --model-name "${MODEL_NAME}" \
     --pretrained-checkpoint "${PRETRAINED_CHECKPOINT}" \
@@ -88,8 +86,14 @@ torchrun \
     --lr "${LR}" \
     --min-lr "${MIN_LR}" \
     --lr-warmup-iters "${LR_WARMUP_ITERS}" \
+    --lr-decay-style "${LR_DECAY_STYLE}" \
+    --lr-wsd-decay-iters "${LR_WSD_DECAY_ITERS}" \
     --tp "${TP_SIZE}" \
-    --pp "${PP_SIZE}" \
     --cp "${CP_SIZE}" \
-    --save "${CHECKPOINT_PATH}" \
+    --ep "${EP_SIZE}" \
+    --save "${CHECKPOINT_SAVE_DIR}" \
     --exp-name "${EXP_NAME}" |& tee "${LOG_DIR}/train_${TIMESTAMP}.log"
+
+    # --token-drop \
+    # --eval-interval 5 \
+    # --save-interval 5 \

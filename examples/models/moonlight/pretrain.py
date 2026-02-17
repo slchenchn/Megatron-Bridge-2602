@@ -17,10 +17,12 @@
 
 import argparse
 from pathlib import Path
+from typing import cast
 
-from megatron.bridge.recipes.moonlight import moonlight_16b_pretrain_config
-from megatron.bridge.training.config import TokenizerConfig
+from megatron.bridge.recipes.moonlight.moonlight_16b import _moonlight_common
+from megatron.bridge.training.config import GPTDatasetConfig, TokenizerConfig
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
@@ -65,9 +67,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1.5e-4)
     parser.add_argument("--min-lr", type=float, default=1.5e-6)
     parser.add_argument("--lr-warmup-iters", type=int, default=100)
+    parser.add_argument(
+        "--lr-decay-style",
+        type=str,
+        default="cosine",
+        choices=["constant", "linear", "cosine", "inverse-square-root", "WSD"],
+    )
+    parser.add_argument("--lr-wsd-decay-iters", type=int, default=None)
 
     parser.add_argument("--tp", "--tensor-model-parallel-size", type=int, default=1)
-    parser.add_argument("--pp", "--pipeline-model-parallel-size", type=int, default=1)
     parser.add_argument("--cp", "--context-parallel-size", type=int, default=1)
     parser.add_argument(
         "--ep",
@@ -77,16 +85,20 @@ def parse_args() -> argparse.Namespace:
         help="Expert model parallel size. Defaults to world_size // (tp*pp*cp).",
     )
 
-    parser.add_argument("--eval-interval", type=int, default=100)
+    parser.add_argument("--eval-interval", type=int, default=1000)
     parser.add_argument("--save-interval", type=int, default=1000)
-    parser.add_argument("--log-interval", type=int, default=10)
+    parser.add_argument("--log-interval", type=int, default=1)
     parser.add_argument("--split", type=str, default="99,1,0")
 
     parser.add_argument("--save", type=str, default=None, help="Checkpoint save dir override.")
-    parser.add_argument("--load", type=str, default=None, help="Checkpoint load dir override.")
 
+    parser.add_argument(
+        "--token-drop",
+        action="store_true",
+        dest="token_drop",
+        help="Enable MoE token drop (better expert load balance, may affect convergence). Default: False.",
+    )
     parser.add_argument("--enable-recompute", action="store_true")
-    parser.add_argument("--apply-rope-fusion", action="store_true")
     return parser.parse_args()
 
 
@@ -123,19 +135,19 @@ def main() -> None:
         raise ValueError("--data-path is required unless --mock-data is set")
 
     tokenizer_path = args.tokenizer_path or _auto_detect_tokenizer_path(args.model_name)
-    expert_model_parallel_size = args.ep or _default_ep(args.tp, args.pp, args.cp)
+    expert_model_parallel_size = args.ep or _default_ep(args.tp, 1, args.cp)
 
-    cfg = moonlight_16b_pretrain_config(
+    cfg = _moonlight_common(
         name=args.exp_name,
         data_paths=args.data_path,
         mock=args.mock_data,
         tensor_model_parallel_size=args.tp,
-        pipeline_model_parallel_size=args.pp,
+        pipeline_model_parallel_size=1,
         context_parallel_size=args.cp,
         expert_model_parallel_size=expert_model_parallel_size,
         sequence_parallel=args.tp > 1,
         recompute_granularity="selective",
-        apply_rope_fusion=args.apply_rope_fusion,
+        apply_rope_fusion=True,
         train_iters=args.train_iters,
         global_batch_size=args.global_batch_size,
         micro_batch_size=args.micro_batch_size,
@@ -148,19 +160,37 @@ def main() -> None:
         save_interval=args.save_interval,
         precision_config=args.precision_config,
     )
+    cfg.scheduler.lr_decay_style = args.lr_decay_style
+    if args.lr_decay_style == "WSD":
+        if args.lr_wsd_decay_iters is None:
+            raise ValueError("--lr-wsd-decay-iters is required when --lr-decay-style WSD")
+        cfg.scheduler.lr_wsd_decay_iters = args.lr_wsd_decay_iters
+    else:
+        cfg.scheduler.lr_wsd_decay_iters = None
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    if args.token_drop:
+        apply_moe_token_drop(cfg.model)
+        cfg.model.moe_router_force_load_balancing = False
+    else:
+        apply_moe_token_drop(
+            cfg.model,
+            moe_expert_capacity_factor=-1.0,
+            moe_pad_expert_input_to_capacity=False,
+        )
 
     cfg.tokenizer = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=tokenizer_path,
         hf_tokenizer_kwargs={"trust_remote_code": True},
     )
-    cfg.dataset.split = args.split
+    dataset_cfg = cast(GPTDatasetConfig, cfg.dataset)
+    dataset_cfg.split = args.split
     cfg.logger.log_interval = args.log_interval
+    cfg.logger.log_throughput = True
 
     if args.save is not None:
         cfg.checkpoint.save = args.save
-    if args.load is not None:
-        cfg.checkpoint.load = args.load
 
     if args.pretrained_checkpoint is not None:
         cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
@@ -172,9 +202,10 @@ def main() -> None:
     print_rank_0(
         "[moonlight-pretrain] "
         f"optimizer={args.optimizer_type}, precision={args.precision_config}, "
-        f"tp={args.tp}, pp={args.pp}, cp={args.cp}, ep={expert_model_parallel_size}, "
+        f"tp={args.tp}, pp=1, cp={args.cp}, ep={expert_model_parallel_size}, "
         f"train_iters={args.train_iters}, gbs={args.global_batch_size}, mbs={args.micro_batch_size}, "
-        f"seq_len={args.seq_length}, mock_data={args.mock_data}, data_path={args.data_path}, pretrained={args.pretrained_checkpoint}"
+        f"seq_len={args.seq_length}, token_drop={args.token_drop}, mock_data={args.mock_data}, "
+        f"data_path={args.data_path}, pretrained={args.pretrained_checkpoint}"
     )
 
     pretrain(config=cfg, forward_step_func=forward_step)

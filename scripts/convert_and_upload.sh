@@ -1,5 +1,6 @@
 # MCORE_DIR=nemo_experiments/Moonlight-16B-A3B_pt_official_ft_f16_adam_pack_TP1_e1/checkpoints/iter_0017165
-MCORE_DIR=nemo_experiments/Moonlight-16B-A3B_pt_official_ft_f8_dist_muon_pack_TP1_e1/checkpoints/iter_0017165
+# MCORE_DIR=nemo_experiments/Moonlight-16B-A3B_pt_official_ft_f8_dist_muon_pack_TP1_e1/checkpoints/iter_0017165
+MCORE_DIR=nemo_experiments/Moonlight-16B-A3B_pt_f16_dist_muon_TP1/checkpoints/iter_0007500
 HF_DIR=${MCORE_DIR}/hf_model
 MODEL_NAME=$(basename "$(dirname "$(dirname "${MCORE_DIR}")")")
 REPO_ID=chenda/${MODEL_NAME}
