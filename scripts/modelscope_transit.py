@@ -116,10 +116,14 @@ def upload_to_modelscope(
     experiment_root = _find_experiment_root(folder_path)
     train_log_path, tb_log_path = _auto_detect_logs(experiment_root)
 
-    linked_paths = []
+    link_root = folder_path / "_logs"
 
-    linked_paths.append(_upload_extra_path(folder_path, train_log_path, "train log"))
-    linked_paths.append(_upload_extra_path(folder_path, tb_log_path, "tb log"))
+    for log_path, label in ((train_log_path, "train log"), (tb_log_path, "tb log")):
+        target_path = link_root / log_path.name
+        if target_path.exists() or target_path.is_symlink():
+            print(f"Skip copying {label}, target already exists: {target_path}")
+            continue
+        _upload_extra_path(folder_path, log_path, label)
     print(f"Uploading {folder_path} to ModelScope: {repo_id} ({repo_type})...")
     _push_folder_to_hub(api, repo_id, folder_path, "upload folder to repo")
     print("ModelScope upload finished.")
