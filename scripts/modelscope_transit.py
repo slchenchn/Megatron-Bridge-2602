@@ -85,8 +85,19 @@ def _auto_detect_logs(experiment_root: Path) -> tuple[Path, Path]:
     """Detect the newest train log and TB directory."""
     log_candidates = sorted(experiment_root.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not log_candidates:
+        log_candidates = sorted(
+            [
+                p
+                for p in experiment_root.glob("**/*.log")
+                if "_logs" not in p.parts and p.is_file()
+            ],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    if not log_candidates:
         raise FileNotFoundError("Failed to auto-detect train log (*.log).")
-    train_log = log_candidates[0]
+    train_named_candidates = [p for p in log_candidates if "train" in p.name.lower()]
+    train_log = train_named_candidates[0] if train_named_candidates else log_candidates[0]
 
     tb_dir_candidates = []
     for candidate in experiment_root.iterdir():
@@ -113,10 +124,34 @@ def upload_to_modelscope(
 ):
     """Upload model plus auto-detected logs to ModelScope."""
     repo_id = _ensure_modelscope_repo(api, repo_id, repo_type)
-    experiment_root = _find_experiment_root(folder_path)
-    train_log_path, tb_log_path = _auto_detect_logs(experiment_root)
-
     link_root = folder_path / "_logs"
+    train_log_path = None
+    tb_log_path = None
+
+    if link_root.exists():
+        existing_train_logs = sorted(
+            [p for p in link_root.glob("*.log") if p.is_file()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        tb_dir_candidates = [
+            p for p in link_root.iterdir() if p.is_dir() and ("tb" in p.name.lower() or "tensorboard" in p.name.lower())
+        ]
+        if not tb_dir_candidates:
+            tb_dir_candidates = sorted(
+                [p.parent for p in link_root.glob("**/events.out.tfevents*")],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+
+        if existing_train_logs and tb_dir_candidates:
+            train_log_path = existing_train_logs[0]
+            tb_log_path = tb_dir_candidates[0]
+            print(f"Found existing log paths in {link_root}, skip auto-detect.")
+
+    if train_log_path is None or tb_log_path is None:
+        experiment_root = _find_experiment_root(folder_path)
+        train_log_path, tb_log_path = _auto_detect_logs(experiment_root)
 
     for log_path, label in ((train_log_path, "train log"), (tb_log_path, "tb log")):
         target_path = link_root / log_path.name
