@@ -47,8 +47,8 @@ MICRO_BATCH_SIZE=1
 PACK_SEQ=1
 EPOCH=1
 SAVE_ROOT=nemo_experiments/finetune
-PRETRAINED_CHECKPOINT=${SAVE_ROOT}/Moonlight-16B-A3B-bridge-mcore
-EXP_NAME=${MODEL_NAME}_pt_official_ft_${PRECISION_INPUT}_${OPTIMIZER_TYPE}
+PRETRAINED_CHECKPOINT=${SAVE_ROOT}/pretrain/Moonlight-16B-A3B-bridge-mcore
+EXP_NAME=finetune/${MODEL_NAME}_pt_official_ft_${PRECISION_INPUT}_${OPTIMIZER_TYPE}
 
 if ((PACK_SEQ == 1)); then
     EXP_NAME=${EXP_NAME}_pack_TP${TP_SIZE}_e${EPOCH}

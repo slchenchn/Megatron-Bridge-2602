@@ -41,7 +41,7 @@ esac
 # ===== Fixed training config (edit here when needed) =====
 MODEL_NAME="Moonlight-16B-A3B"
 SAVE_ROOT=nemo_experiments/pretrain
-PRETRAINED_CHECKPOINT=${SAVE_ROOT}/Moonlight-16B-A3B-bridge-mcore
+PRETRAINED_CHECKPOINT=${SAVE_ROOT}/pretrain/Moonlight-16B-A3B-bridge-mcore
 TOKENIZER_PATH="/home/admin/csl/checkpoints/moonshotai/${MODEL_NAME}"
 DATA_PATH="/home/admin/csl/Dataset/tokenized_merged_moonlight/dolma3_dolmino_mix-100B-1125-ingredient1_moonlight_v2_coverage"
 
@@ -58,7 +58,7 @@ LR_WARMUP_ITERS=8
 LR_DECAY_STYLE="WSD"
 LR_WSD_DECAY_ITERS=750
 
-EXP_NAME="${MODEL_NAME}_pt_${PRECISION_INPUT}_${OPTIMIZER_TYPE}_TP${TP_SIZE}"
+EXP_NAME=pretrain/${MODEL_NAME}_pt_${PRECISION_INPUT}_${OPTIMIZER_TYPE}_TP${TP_SIZE}
 CHECKPOINT_SAVE_DIR=${SAVE_ROOT}/${EXP_NAME}/checkpoints
 
 LOG_DIR=${SAVE_ROOT}/${EXP_NAME}
