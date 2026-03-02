@@ -46,7 +46,7 @@ TP_SIZE=1
 MICRO_BATCH_SIZE=1
 PACK_SEQ=1
 EPOCH=1
-SAVE_ROOT=nemo_experiments/finetune
+SAVE_ROOT=nemo_experiments
 PRETRAINED_CHECKPOINT=${SAVE_ROOT}/pretrain/Moonlight-16B-A3B_pt_f8_adam_TP1/checkpoints
 EXP_NAME=finetune/${MODEL_NAME}_pt_adam_f8_ft_${PRECISION_INPUT}_${OPTIMIZER_TYPE}
 
